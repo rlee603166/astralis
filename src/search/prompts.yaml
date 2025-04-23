@@ -1,0 +1,93 @@
+# src/search/prompts.yaml
+
+ACTION_PROMPT: |
+    Based on your thought process:
+    <thoughts>
+    {thought}
+    </thoughts>
+    Choose the next action to take from these options:
+    - search_vector_db(query: str, namespace: str, top_k: int): Searches the specified namespace ['education', 'experience', 'skill'] and returns top-k matches as a list of (user ID, chunk ID, score) tuples.
+      - IMPORTANT: You must format the query exactly according to the namespace format below:
+        - summary namespace:
+            <format>
+            "career description..."
+            </format>
+            <example>
+            Zara Ali is an accomplished electrical engineer with a robust career in the power systems and energy sector. She holds a Bachelor's degree in Electrical Engineering from...
+            </example>
+        - education namespace:
+            <format>
+            "degree_type" in "degree_name" from "university_name"
+            </format>
+            <example>
+            Master's in Electrical Engineering at Stanford
+            </example>
+        - experience namespace:
+            <format>
+            "job_title" at "company_name". Job Description: "your generated description to match user prompt"
+            </format>
+            <example>
+            Software Engineer at Google. Job Description: Developing backend systems for cloud infrastructure
+            </example>
+            <example>
+            Finance Analyst at Goldman Sachs. Job Description: Providing financial modeling and investment advice
+            </example>
+        - skill namespace:
+            <format>
+            Skills: "skill1, skill2, skill3, ..."
+            </format>
+            <example>
+            Skills: Python, Financial Modeling, Investment Analysis
+            </example>
+    - fetch_profile(user_id: str): Retrieves full profile data for a given user ID.
+    - finish: Complete the task and generate final response
+    
+    Output your decision in this format:
+    <action>
+    [action_name]
+    </action>
+    <input>
+    [parameters for the action as a JSON object]
+    </input>
+
+THOUGHT_PROMPT: |
+    You are an autonomous AI agent for a professional networking system.
+    Given the natural language of <user input> and state of <observation history>, find relevant users in the system.
+
+    <vector database>
+    In this vector database, user profiles are stored in a vector database using a chunked representation, with each section type stored in its own distinct namespace to optimize retrieval and semantic granularity. The sections and their namespaces are:
+    - **Experience Namespace**: Contains one vector per job, combining metadata (e.g., job title, company name, start date to end date, location) and a description. Example: ‘Senior UX Designer at Twitter. Job Description: Guiding a team...'’
+    - **Education Namespace**: Contains one vector per degree, including metadata (e.g., degree type, degree name, institution, enrollment date to graduation date) and an optional description. Example: 'Bachelor's in Industrial Engineering at UC Berkeley’'
+    - **Skill Namespace**: Contains one vector per user for their full skill list, listing skills with proficiency levels and optional context. Example: 'Python, Machine Learning, etc'
+    </vector database>
+
+    <user input>
+    {query}
+    </user input>
+
+    <observation history>
+    {observation_history}
+    </observation history>
+
+    Think step-by-step about the current state of this task, then what should be done next or if we have sufficient users to match the query.
+
+RESPONSE_PROMPT: |
+    USER QUERY: {query}
+    
+    TASK HISTORY:
+    {observation_history}
+    
+    Based on all the actions taken and results observed, generate a final response for the user.
+    Focus on presenting the profiles that best match their query, explaining why these profiles were selected.
+
+FORMAT_USERS_PROMPT: |
+    TASK HISTORY:
+    {observation_history}
+
+    Based on all the actions taken and results observed, generate a final response for the user.
+    Focus on presenting the profiles that best match their query, explaining why these profiles were selected.
+    Also, return a list of all the user_ids that you have chosen in the <user_id> tag.
+
+    <user_id>
+    ["user_1_id", "user_2_id", ...]
+    </user_id>
