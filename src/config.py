@@ -18,6 +18,14 @@ class Config(BaseSettings):
     PINECONE_CLOUD: str
     PINECONE_REGION: str
 
+
+    NEO4J_URI: str
+    NEO4J_USERNAME: str
+    NEO4J_PASSWORD: str
+    AURA_INSTANCEID: str
+    AURA_INSTANCENAME: str
+
+
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     EMBEDDING_DIMENSION: int = 384
 

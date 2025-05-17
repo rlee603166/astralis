@@ -17,9 +17,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 SESSION_EXPIRATION_SECONDS = 3600
 
-class Astralis:
+class MKOne:
     """
-    Secret Sauce bbg - Now with Session Memory!
+    Secret Sauce bbg
     """
     def __init__(
         self,

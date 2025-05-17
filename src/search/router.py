@@ -2,15 +2,16 @@
 
 import json
 import uuid
-from typing import Optional, AsyncGenerator, Dict, Any 
-from fastapi import APIRouter, Depends, Header, HTTPException 
-from fastapi.responses import StreamingResponse
-from database.client import get_async_session_factory
-from search.services.astralis import Astralis
-from search.dependencies import get_astralis
-from search.models import QueryRequest
 import asyncio
-import json
+from sqlalchemy import text
+from search.agents.astralis import Astralis
+from fastapi.responses import StreamingResponse
+from search.services.rag_service import RAGService
+from typing import Optional, AsyncGenerator, Dict, Any 
+from search.models import QueryRequest, SessionCreateRequest
+from fastapi import APIRouter, Depends, Header, HTTPException 
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+from search.dependencies import get_astralis, get_rag_service, get_db_factory
 
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -19,25 +20,57 @@ router = APIRouter(prefix="/search", tags=["search"])
 async def hello():
     return { "message": "Hello from search api v1.0.1 with Sessions!" }
 
-@router.post("/")
+
+@router.get("/sessions/{session_id}")
+async def get_session(
+    session_id: str,
+    driver: async_sessionmaker[AsyncSession] = Depends(get_db_factory)
+):
+    async with driver() as session:
+        result = await session.execute(
+            text("""
+                SELECT * FROM chat_messages
+                WHERE session_id = :session_id
+                ORDER BY created_at;
+            """),
+            { "session_id": session_id }
+        )
+    messages = result.mappings().all()
+
+    return messages
+
+
+@router.post("/sessions")
+async def create_session(
+    request: SessionCreateRequest,
+    driver: async_sessionmaker[AsyncSession] = Depends(get_db_factory)
+):
+    user_id = request.user_id
+    session_id = str(uuid.uuid4())
+    async with driver() as session:
+        await session.execute(
+            text("""
+                INSERT INTO chat_sessions (session_id, user_id)
+                VALUES (:session_id, :user_id)
+            """),
+            { "session_id": session_id, "user_id": user_id }
+        )
+        await session.commit()
+
+    return {"session_id": session_id}
+
+
+@router.post("/query")
 async def search(
     request: QueryRequest,
-    agent: Astralis = Depends(get_astralis),
-    x_session_id: Optional[str] = Header(None, alias="X-Session-ID")
+    agent: Astralis = Depends(get_astralis)
 ):
-    """
-    Handles search requests, maintaining conversation context via session ID.
-    If X-Session-ID header is not provided, a new session is created.
-    """
-    session_id = x_session_id or str(uuid.uuid4())
-    new_session_created = not x_session_id
-    print(f"Search request received. Session ID: {session_id} (New: {new_session_created})")
-    print(f"Query: {request.query}")
-
+    query = request.query
+    session_id = request.session_id
     async def event_generator() -> AsyncGenerator[str, None]:
         """Generate server-sent events with proper formatting and session context."""
         try:
-            async for output in agent.run(request.query, session_id=session_id):
+            async for output in agent.run(query, session_id=session_id):
                 try:
                     output_json = json.dumps(output)
                     yield f"data: {output_json}\n\n"
@@ -64,9 +97,6 @@ async def search(
         "Connection": "keep-alive",
         "X-Content-Type-Options": "nosniff",
     }
-    if new_session_created:
-        response_headers["X-Session-ID"] = session_id
-        print(f"Returning new session ID in header: {session_id}")
 
     return StreamingResponse(
         event_generator(),
@@ -97,17 +127,22 @@ async def test(agent: Astralis = Depends(get_astralis)):
 
     return await asyncio.gather(*tasks)
 
-# @router.get("/vector")
-# async def test_profile_fetch(agent: Astralis = Depends(get_astralis)):
-#     test_user_id = "00a7a0cc-1b25-4d4e-96a6-7d0db3b77d02"
-#     try:
-#         user = await agent._get_user_profile(test_user_id)
-#         if user:
-#             return user.for_llm()
-#         else:
-#             raise HTTPException(status_code=404, detail=f"Test user {test_user_id} not found.")
-#     except HTTPException as he:
-#         raise he
-#     except Exception as e:
-#         print(f"Error in /vector test endpoint: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
+@router.get("/graph")
+def graph(rag_service: RAGService = Depends(get_rag_service)):
+    query = """
+    MATCH (p:Person)-[:HAS_EXPERIENCE]->(e1:Experience)
+    WHERE toLower(e1.company_name) CONTAINS "google"
+      AND toLower(e1.job_title) CONTAINS "software engineer"
+
+    MATCH (e1)-[:NEXT_EXPERIENCE]->(e2:Experience)
+    LIMIT 5
+    RETURN p.first_name AS person, 
+           e1.company_name AS from_company, 
+           e1.job_title AS from_title, 
+           e2.company_name AS to_company, 
+           e2.job_title AS to_title,
+           e2.start_date AS transition_date
+    ORDER BY transition_date
+    """
+    return rag_service.query_graph(query)
+

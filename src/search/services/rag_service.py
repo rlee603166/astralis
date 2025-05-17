@@ -3,15 +3,18 @@
 from typing import Dict, Any
 from sentence_transformers import SentenceTransformer
 from search.services.pinecone_manager import PineconeManager
+from search.services.neo_manager import NeoManager
 
 class RAGService:
     def __init__(
         self,
+        neo_manager: NeoManager,
         pinecone_manager: PineconeManager,
         embedding_engine: SentenceTransformer
     ):
-        self.pinecone_manager = pinecone_manager
-        self.embedding_engine = embedding_engine
+        self.neo_manager        = neo_manager
+        self.pinecone_manager   = pinecone_manager
+        self.embedding_engine   = embedding_engine
         
     def query_vector(
         self,
@@ -38,3 +41,8 @@ class RAGService:
         )
 
         return response
+
+    def query_graph(self, query):
+        _driver = self.neo_manager._get_driver()
+        records, summary, keys = _driver.execute_query(query, database_="neo4j")
+        return records

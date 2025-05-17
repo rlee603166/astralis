@@ -7,22 +7,31 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 from config import Config, get_settings
 from search.services import embedding_engine
-from search.services.astralis import Astralis
+from search.agents.astralis import Astralis
 from search.services.rag_service import RAGService
 from database.client import get_async_session_factory
 from sentence_transformers import SentenceTransformer
 from search.services.prompt_manager import PromptManager
 from search.services.pinecone_manager import PineconeManager
+from search.services.neo_manager import NeoManager
 from typing import AsyncGenerator
 
 def get_pinecone_manager():
     return PineconeManager()
 
+def get_neo_manager():
+    return NeoManager()
+
 def get_rag_service(
-    pinecone_manager: PineconeManager = Depends(get_pinecone_manager),
-    embedding_engine: SentenceTransformer = Depends(embedding_engine.get_embedding_engine)
+    neo_manager:        NeoManager = Depends(get_neo_manager),
+    pinecone_manager:   PineconeManager = Depends(get_pinecone_manager),
+    embedding_engine:   SentenceTransformer = Depends(embedding_engine.get_embedding_engine)
 ) -> RAGService:
-    return RAGService(pinecone_manager, embedding_engine)
+    return RAGService(
+        neo_manager,
+        pinecone_manager,
+        embedding_engine
+    )
 
 async def get_db_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     session_factory = get_async_session_factory()
