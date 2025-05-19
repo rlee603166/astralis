@@ -42,7 +42,12 @@ class RAGService:
 
         return response
 
-    def query_graph(self, query):
-        _driver = self.neo_manager._get_driver()
-        records, summary, keys = _driver.execute_query(query, database_="neo4j")
-        return records
+    async def query_graph(self, cypher_query: str):
+        print("[FETCH]: Querying knowledge graph")
+        print(f"[CYPHER]: \n{cypher_query}")
+        try:
+            async with self.neo_manager._get_driver() as driver:
+                records, _, _ = await driver.execute_query(cypher_query, database_="neo4j")
+            return records
+        except Exception as e:
+            return f"Error running Cypher: {str(e)}"

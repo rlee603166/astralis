@@ -27,14 +27,14 @@ class Astralis:
         model: str,
         client: AsyncOpenAI,
         psql_db: async_sessionmaker[AsyncSession],
-        vector_db: RAGService,
+        rag_service: RAGService,
         prompt_manager: PromptManager,
         redis_client: redis.Redis
     ):
         self.model = model
         self.client = client
         self.psql_db_factory = psql_db
-        self.vector_db = vector_db
+        self.rag_service = rag_service
         self.prompt_manager = prompt_manager
         self.redis_client = redis_client
 
@@ -402,22 +402,45 @@ class Astralis:
         action = action.lower()
         print(f"Executing action: {action} with input: {action_input}")
 
-        if action == "search_vector_db":
+        if action == "query_graph":
+            query = action_input.get("query")
+            variables = action_input.get("variables", [])
+            try:
+                user_ids = []
+                records = await self.rag_service.query_graph(query)
+                for record in records:
+                    for var in variables:
+                        user_ids.append(record.data()[var]["user_id"])
+
+
+                unique_user_ids = list(set(user_ids))
+                print(f"Found {len(unique_user_ids)} unique user IDs from vector search.")
+
+                if not unique_user_ids:
+                    return []
+
+                return await self._fetch_users(unique_user_ids)
+
+            except Exception as e:
+                print(f"[ERROR] Failed during graph rag or profile fetching: {e}")
+                raise HTTPException(status_code=500, detail=f"graph rag/profile fetch failed: {e}")
+
+        elif action == "search_rag_service":
             query = action_input.get("query")
             namespace = action_input.get("namespace")
             top_k = action_input.get("top_k", 5)
 
             if not query or not namespace:
-                print("[ERROR] Missing 'query' or 'namespace' for search_vector_db")
+                print("[ERROR] Missing 'query' or 'namespace' for search_rag_service")
                 raise HTTPException(status_code=400, detail="Missing required parameters for vector search.")
 
             allowed_namespaces = ['experience', 'education', 'skill', 'summary']
             if namespace not in allowed_namespaces:
-                print(f"[ERROR] Invalid namespace '{namespace}' for search_vector_db")
+                print(f"[ERROR] Invalid namespace '{namespace}' for search_rag_service")
                 raise HTTPException(status_code=400, detail=f"Invalid namespace '{namespace}'. Allowed: {allowed_namespaces}")
 
             try:
-                vector_results = self.vector_db.query_vector(
+                vector_results = self.rag_service.query_vector(
                     query=str(query),
                     namespace=str(namespace),
                     top_k=int(top_k)
@@ -437,17 +460,7 @@ class Astralis:
                 if not unique_user_ids:
                     return []
 
-                tasks = [self._get_user_profile(uid) for uid in unique_user_ids]
-                fetched_users_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                fetched_users = []
-                for i, result in enumerate(fetched_users_results):
-                    if isinstance(result, User):
-                        fetched_users.append(result)
-                    elif isinstance(result, Exception):
-                        print(f"[ERROR] Failed to fetch profile for user_id {unique_user_ids[i]}: {result}")
-
-                return fetched_users
+                return await self._fetch_users(unique_user_ids)
 
             except Exception as e:
                 print(f"[ERROR] Failed during vector search or profile fetching: {e}")
@@ -628,6 +641,26 @@ class Astralis:
         else:
             print(f"[WARN] Unknown action received: {action}")
             return []
+
+    async def _fetch_users(self, user_ids):
+        unique_user_ids = list(set(user_ids))
+        print(f"Found {len(unique_user_ids)} unique user IDs from vector search.")
+
+        if not unique_user_ids:
+            return []
+
+        tasks = [self._get_user_profile(uid) for uid in unique_user_ids]
+        fetched_users_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        fetched_users = []
+        for i, result in enumerate(fetched_users_results):
+            if isinstance(result, User):
+                fetched_users.append(result)
+            elif isinstance(result, Exception):
+                print(f"[ERROR] Failed to fetch profile for user_id {unique_user_ids[i]}: {result}")
+
+        return fetched_users
+
 
     async def _get_user_profile(self, user_id: str) -> User | None:
         print(f"Fetching profile for user_id: {user_id}")

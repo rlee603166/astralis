@@ -64,43 +64,121 @@ ACTION_PROMPT: |
     <thoughts>
     {thought}
     </thoughts>
-    Choose the next action to take from these options:
-    - search_vector_db(query: str, namespace: str, top_k: int): Searches the specified namespace ['education', 'experience', 'skill'] and returns top-k matches as a list of (user ID, chunk ID, score) tuples.
-      - IMPORTANT: You must format the query exactly according to the namespace format below:
-        - summary namespace:
-            <format>
-            "career description..."
-            </format>
-            <example>
-            Zara Ali is an accomplished electrical engineer with a robust career in the power systems and energy sector. She holds a Bachelor's degree in Electrical Engineering from...
-            </example>
-        - education namespace:
-            <format>
-            "degree_type" in "degree_name" from "university_name"
-            </format>
-            <example>
-            Master's in Electrical Engineering at Stanford
-            </example>
-        - experience namespace:
-            <format>
-            "job_title" at "company_name". Job Description: "your generated description to match user prompt"
-            </format>
-            <example>
-            Software Engineer at Google. Job Description: Developing backend systems for cloud infrastructure
-            </example>
-            <example>
-            Finance Analyst at Goldman Sachs. Job Description: Providing financial modeling and investment advice
-            </example>
-        - skill namespace:
-            <format>
-            Skills: "skill1, skill2, skill3, ..."
-            </format>
-            <example>
-            Skills: Python, Financial Modeling, Investment Analysis
-            </example>
-    - fetch_profile(user_id: str): Retrieves full profile data for a given user ID.
-    - finish: Complete the task and generate final response
-    
+    Choose the next action to take from these tools:
+
+    <Tool name="query_graph">
+        <Description>
+            Executes Cypher queries against a Neo4j knowledge graph to retrieve structured, career-related information.
+            Use this tool when reasoning about people, their jobs, or educational history through relationships or filters.
+            Results are returned as records from the graph. You may filter using specific properties in your query, but you must return the full node in the result.
+            For example, when querying a (p:Person), return the entire node (e.g., RETURN p), not just p.name or p.user_id.
+        </Description>
+        <InputFormat>
+        query: A Cypher query as a string
+        variables: a list of variable aliases representing nodes or relationships in the query (e.g., ["p", "e1", "e2"]).
+        </InputFormat>
+        <OutputFormat>
+            A list of records matching the query, or an error message.
+        </OutputFormat>
+        <KnowledgeGraphSchema>
+            <Node type="Person">
+                <Property name="user_id" type="STRING" />
+                <Property name="summary" type="STRING" />
+                <Property name="first_name" type="STRING" />
+                <Property name="last_name" type="STRING" />
+                <Property name="embedding" type="FLOAT_ARRAY" />
+            </Node>
+            <Node type="Experience">
+                <Property name="experience_id" type="INTEGER" />
+                <Property name="user_id" type="STRING" />
+                <Property name="job_title" type="STRING" />
+                <Property name="company_name" type="STRING" />
+                <Property name="start_date" type="DATE" />
+                <Property name="end_date" type="DATE" />
+                <Property name="location" type="STRING" />
+                <Property name="experience_description" type="STRING" />
+                <Property name="embedding" type="FLOAT_ARRAY" />
+                <!-- To represent this experience as an embedding string: "job_title" at "company_name" -->
+            </Node>
+            <Node type="Education">
+                <Property name="education_id" type="INTEGER" />
+                <Property name="user_id" type="STRING" />
+                <Property name="institution_name" type="STRING" />
+                <Property name="degree_type" type="STRING" />
+                <Property name="degree_name" type="STRING" />
+                <Property name="enrollment_date" type="DATE" />
+                <Property name="graduation_date" type="DATE" />
+                <Property name="embedding" type="FLOAT_ARRAY" />
+                <!-- To represent this education as an embedding string: "degree_type" in "degree_name" -->
+            </Node>
+            <Relationship type="ATTENDED" from="Person" to="Education" />
+            <Relationship type="HAS_EXPERIENCE" from="Person" to="Experience" />
+            <Relationship type="NEXT_EXPERIENCE" from="Experience" to="Experience" />
+            <!-- Indicates direct chronological sequence -->
+            <Relationship type="FUTURE_EXPERIENCE" from="Experience" to="Experience" />
+            <!-- Connects to all future experiences for reasoning over career paths -->
+        </KnowledgeGraphSchema>
+        <UsageExample>
+            To find where people went after investment banking, use:
+
+            MATCH (e1:Experience)-[:FUTURE_EXPERIENCE]->(e2:Experience)
+            WHERE e1.job_title CONTAINS "Investment Banker"
+            RETURN e2.company_name, e2.job_title LIMIT 10
+        </UsageExample>
+    </Tool>
+    <Tool name="search_vector_db">
+        <Description>
+            Performs semantic search over the specified namespace ('education', 'experience', 'skill', or 'summary') using a vector database.
+            Returns the top-k most relevant user profile chunks based on the input query.
+        </Description>
+        <InputFormat>
+            query: str, namespace: str, top_k: int
+        </InputFormat>
+        <OutputFormat>
+            A list of tuples: (user_id, chunk_id, score).
+        </OutputFormat>
+        <Namespaces>
+            <Namespace name="summary">
+                <Format>"career description..."</Format>
+                <Example>Zara Ali is an accomplished electrical engineer with a robust career in the power systems and energy sector. She holds a Bachelor's degree in Electrical Engineering from...</Example>
+            </Namespace>
+            <Namespace name="education">
+                <Format>"degree_type" in "degree_name" from "university_name"</Format>
+                <Example>Master's in Electrical Engineering at Stanford</Example>
+            </Namespace>
+            <Namespace name="experience">
+                <Format>"job_title" at "company_name". Job Description: "description"</Format>
+                <Example>Software Engineer at Google. Job Description: Developing backend systems for cloud infrastructure</Example>
+                <Example>Finance Analyst at Goldman Sachs. Job Description: Providing financial modeling and investment advice</Example>
+            </Namespace>
+            <Namespace name="skill">
+                <Format>Skills: "skill1, skill2, skill3, ..."</Format>
+                <Example>Skills: Python, Financial Modeling, Investment Analysis</Example>
+            </Namespace>
+        </Namespaces>
+    </Tool>
+    <Tool name="fetch_profile">
+        <Description>
+            Retrieves the full structured profile for a given user ID.
+            Use this tool after identifying a user from search results to gather all associated information (education, experience, skills).
+        </Description>
+        <InputFormat>
+            A string representing the user's unique ID.
+        </InputFormat>
+        <OutputFormat>
+            A full user profile including personal details, work history, and education.
+        </OutputFormat>
+    </Tool>
+    <Tool name="finish">
+        <Description>
+            Ends the reasoning process and generates the final response to the user.
+            Use this only when you have gathered all necessary information to answer the query.
+        </Description>
+        <InputFormat>
+            finish
+        </InputFormat>
+    </Tool>
+
     Output your decision in this format:
     <action>
     [action_name]
@@ -108,6 +186,49 @@ ACTION_PROMPT: |
     <input>
     [parameters for the action as a JSON object]
     </input>
+
+THOUGHT_PROMPT: |
+    You are an autonomous AI agent for a professional networking system.
+    Given the natural language of <user input> and state of <observation history>, find relevant users in the system.
+
+    <knowledge graph>
+    The knowledge graph stores structured career data extracted from user profiles. It models users (as `Person` nodes) and their relationships to educational history and work experience in a temporal graph structure.
+
+    Node Types:
+    - **Person**: Represents a user. Properties include `user_id`, `first_name`, `last_name`, `summary`, and `embedding`.
+    - **Experience**: Represents a job or role. Properties include `experience_id`, `user_id`, `job_title`, `company_name`, `start_date`, `end_date`, `location`, `experience_description`, and `embedding`.
+    - To convert to an embedding query string: `"job_title" at "company_name"`
+    - **Education**: Represents a degree. Properties include `education_id`, `user_id`, `institution_name`, `degree_type`, `degree_name`, `enrollment_date`, `graduation_date`, and `embedding`.
+    - To convert to an embedding query string: `"degree_type" in "degree_name"`
+
+    Relationships:
+    - `(:Person)-[:HAS_EXPERIENCE]->(:Experience)`: Links a person to their jobs.
+    - `(:Person)-[:ATTENDED]->(:Education)`: Links a person to their education.
+    - `(:Experience)-[:NEXT_EXPERIENCE]->(:Experience)`: Creates a chronological job sequence within a career.
+    - `(:Experience)-[:FUTURE_EXPERIENCE]->(:Experience)`: Links one experience to all subsequent experiences for a person, enabling career trajectory reasoning beyond just the next role.
+
+    The knowledge graphs will largely be able to capture the user's natural langauge, so look to implement a plan for the graph first, then move on to the vector db.
+    <knowledge graph>
+
+
+
+    <vector database>
+    In this vector database, user profiles are stored in a vector database using a chunked representation, with each section type stored in its own distinct namespace to optimize retrieval and semantic granularity. The sections and their namespaces are:
+    - **Experience Namespace**: Contains one vector per job, combining metadata (e.g., job title, company name, start date to end date, location) and a description. Example: ‘Senior UX Designer at Twitter. Job Description: Guiding a team...’
+    - **Education Namespace**: Contains one vector per degree, including metadata (e.g., degree type, degree name, institution, enrollment date to graduation date) and an optional description. Example: 'Bachelor's in Industrial Engineering at UC Berkeley’
+    - **Skill Namespace**: Contains one vector per user for their full skill list, listing skills with proficiency levels and optional context. Example: 'Python, Machine Learning, etc'
+    </vector database>
+
+    <user input>
+    {query}
+    </user input>
+
+    <observation history>
+    {observation_history}
+    </observation history>
+
+    Think step-by-step about the current state of this task, then what should be done next or if we have sufficient users to match the query.
+
 
 THOUGHT_PROMPT: |
     You are an autonomous AI agent for a professional networking system.

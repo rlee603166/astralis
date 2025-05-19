@@ -3,7 +3,11 @@
 import json
 import uuid
 import asyncio
+
+from sqlalchemy import select, and_, or_, func, text, inspect 
+from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy import text
+from database.models import User
 from search.agents.astralis import Astralis
 from fastapi.responses import StreamingResponse
 from search.services.rag_service import RAGService
@@ -104,6 +108,10 @@ async def search(
         headers=response_headers
     )
 
+
+"""
+Test Endpoints
+"""
 @router.get("/vector")
 async def test(agent: Astralis = Depends(get_astralis)):
     user_ids = [
@@ -127,8 +135,39 @@ async def test(agent: Astralis = Depends(get_astralis)):
 
     return await asyncio.gather(*tasks)
 
+async def _get_user_profile(
+    user_id: str,
+    psql_db_factory: async_sessionmaker[AsyncSession]
+) -> User | None:
+    print(f"Fetching profile for user_id: {user_id}")
+    query = (
+        select(User)
+        .options(
+            selectinload(User.projects),
+            selectinload(User.educations),
+            selectinload(User.experiences),
+            selectinload(User.skills)
+        )
+        .where(User.user_id == user_id)
+    )
+
+    async with psql_db_factory() as session:
+        try:
+            result = await session.execute(query)
+            user = result.scalars().first()
+            if not user:
+                print(f"[INFO] User profile not found for id: {user_id}")
+                return None
+            return user
+        except Exception as e:
+            print(f"[ERROR] Database error fetching profile {user_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Database error fetching profile {user_id}")
+
 @router.get("/graph")
-def graph(rag_service: RAGService = Depends(get_rag_service)):
+async def graph(
+    rag_service: RAGService = Depends(get_rag_service),
+    psql_db_factory: async_sessionmaker[AsyncSession] = Depends(get_db_factory)
+):
     query = """
     MATCH (p:Person)-[:HAS_EXPERIENCE]->(e1:Experience)
     WHERE toLower(e1.company_name) CONTAINS "google"
@@ -136,7 +175,7 @@ def graph(rag_service: RAGService = Depends(get_rag_service)):
 
     MATCH (e1)-[:NEXT_EXPERIENCE]->(e2:Experience)
     LIMIT 5
-    RETURN p.first_name AS person, 
+    RETURN p, 
            e1.company_name AS from_company, 
            e1.job_title AS from_title, 
            e2.company_name AS to_company, 
@@ -144,5 +183,28 @@ def graph(rag_service: RAGService = Depends(get_rag_service)):
            e2.start_date AS transition_date
     ORDER BY transition_date
     """
-    return rag_service.query_graph(query)
+
+    user_ids = []
+    records = await rag_service.query_graph(query)
+    for record in records:
+        print(record)
+        user_ids.append(record.data()["p"]["user_id"])
+
+    unique_user_ids = list(set(user_ids))
+    print(f"Found {len(unique_user_ids)} unique user IDs from vector search.")
+
+    if not unique_user_ids:
+        return []
+
+    tasks = [_get_user_profile(uid, psql_db_factory) for uid in unique_user_ids]
+    fetched_users_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    fetched_users = []
+    for i, result in enumerate(fetched_users_results):
+        if isinstance(result, User):
+            fetched_users.append(result)
+        elif isinstance(result, Exception):
+            print(f"[ERROR] Failed to fetch profile for user_id {unique_user_ids[i]}: {result}")
+
+    return fetched_users
 

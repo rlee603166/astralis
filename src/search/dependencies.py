@@ -16,6 +16,7 @@ from search.services.pinecone_manager import PineconeManager
 from search.services.neo_manager import NeoManager
 from typing import AsyncGenerator
 
+
 def get_pinecone_manager():
     return PineconeManager()
 
@@ -75,7 +76,7 @@ def get_astralis(
     settings: Config = Depends(get_settings),
     client: AsyncOpenAI = Depends(get_llm),
     psql_db_factory: async_sessionmaker[AsyncSession] = Depends(get_db_factory),
-    vector_db: RAGService = Depends(get_rag_service),
+    rag_service: RAGService = Depends(get_rag_service),
     prompt_manager: PromptManager = Depends(get_prompt_manager),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Astralis:
@@ -83,7 +84,7 @@ def get_astralis(
         model=settings.OPENAI_MODEL,
         client=client,
         psql_db=psql_db_factory,
-        vector_db=vector_db,
+        rag_service=rag_service,
         prompt_manager=prompt_manager,
         redis_client=redis_client
     )
