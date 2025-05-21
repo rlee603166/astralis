@@ -61,10 +61,13 @@ TEMP_ACTION_PROMPT: |
 
 ACTION_PROMPT: |
     Based on your thought process:
+    <step>
+    You have taken {iteration} out of 5 allowed steps so far.
+    </step>
     <thoughts>
     {thought}
     </thoughts>
-    Choose the next action to take from these tools:
+    If after 5 steps, there are no users finish the reasoning loop. Choose the next action to take from these tools:
 
     <Tool name="query_graph">
         <Description>
@@ -126,7 +129,7 @@ ACTION_PROMPT: |
             RETURN e2.company_name, e2.job_title LIMIT 10
         </UsageExample>
     </Tool>
-    <Tool name="search_vector_db">
+    <Tool name="search_rag_service">
         <Description>
             Performs semantic search over the specified namespace ('education', 'experience', 'skill', or 'summary') using a vector database.
             Returns the top-k most relevant user profile chunks based on the input query.
@@ -157,22 +160,11 @@ ACTION_PROMPT: |
             </Namespace>
         </Namespaces>
     </Tool>
-    <Tool name="fetch_profile">
-        <Description>
-            Retrieves the full structured profile for a given user ID.
-            Use this tool after identifying a user from search results to gather all associated information (education, experience, skills).
-        </Description>
-        <InputFormat>
-            A string representing the user's unique ID.
-        </InputFormat>
-        <OutputFormat>
-            A full user profile including personal details, work history, and education.
-        </OutputFormat>
-    </Tool>
     <Tool name="finish">
         <Description>
             Ends the reasoning process and generates the final response to the user.
             Use this only when you have gathered all necessary information to answer the query.
+            If there are found users, in the parameters list the users that you have found that makes you believe we are ready to present.
         </Description>
         <InputFormat>
             finish
@@ -190,6 +182,15 @@ ACTION_PROMPT: |
 THOUGHT_PROMPT: |
     You are an autonomous AI agent for a professional networking system.
     Given the natural language of <user input> and state of <observation history>, find relevant users in the system.
+    # Step 1: Recall
+    If there is past conversation history, retrieve the most relevant turns and identify the ongoing theme or entities.
+
+    # Step 2: Relate
+    Ensure the user’s current query explicitly builds on that theme.  
+    Example:  
+      - Previous: “Find Google software engineers”  
+      - Current:  “Show me those who have completed a master’s”  
+      => Filter the Google engineers by master’s degree, don’t restart from zero.
 
     <knowledge graph>
     The knowledge graph stores structured career data extracted from user profiles. It models users (as `Person` nodes) and their relationships to educational history and work experience in a temporal graph structure.
@@ -232,7 +233,7 @@ THOUGHT_PROMPT: |
 
 THOUGHT_PROMPT: |
     You are an autonomous AI agent for a professional networking system.
-    Given the natural language of <user input> and state of <observation history>, find relevant users in the system.
+    Given the natural language of <user input> and state of the <conversation> and <observation history>, find relevant users in the system. Make sure that the people you are looking for align the user's interests.
 
     <vector database>
     In this vector database, user profiles are stored in a vector database using a chunked representation, with each section type stored in its own distinct namespace to optimize retrieval and semantic granularity. The sections and their namespaces are:
@@ -257,7 +258,7 @@ RESPONSE_PROMPT: |
     TASK HISTORY:
     {observation_history}
     
-    Based on all the actions taken and results observed, generate a concise, final response for the user.
+    Based on all the actions taken and results observed, generate a concise, final response for the user. If there are no users than the agent most likely did not find anything sufficient. Format an appropriate response to that.
     Focus on presenting the profiles that best match their query, explaining why these profiles were selected.
 
 FORMAT_USERS_PROMPT: |

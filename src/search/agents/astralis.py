@@ -163,31 +163,35 @@ class Astralis:
                 # Check if the *last appended action* was 'finish'
                 if self._is_task_complete():
                     final_response_content = ""
-                    async for final_chunk in self._generate_final_response():
-                        final_response_content += final_chunk
-                        yield { "type": "response", "message": final_chunk }
 
-                    final_users = []
-                    async for user in self._generate_final_users(final_response_content):
-                        final_users.append(user)
+                    async for item in self.stream_response_and_users_parallel():
+                        yield item
+
+                    # async for final_chunk in self._generate_final_response():
+                    #     final_response_content += final_chunk
+                    #     yield { "type": "response", "message": final_chunk }
+                    #
+                    # final_users = []
+                    # async for user in self._generate_final_users(final_response_content):
+                    #     final_users.append(user)
+                    #     yield { "type": "users_found", "message": user }
 
 
-                    yield { "type": "users_found", "message": final_users }
 
-                    print(f"[FINAL USERS]: {final_users}")
+                    # print(f"[FINAL USERS]: {final_users}")
                     print(f"[RESPONSE]: Final response generated.")
                     print(f"[RESPONSE CONTENT]: {final_response_content}")
 
                     yield { "type": "end", "message": "Task completed successfully." }
                     # await self._save_history(session_id, self.context['memory'])
 
-                    final_users_str = json.dumps(final_users)
-
-                    final_response_content += f"""\n
-                    <full profiles> 
-                    {final_users_str}
-                    </full profiles>
-                    """
+                    # final_users_str = json.dumps(final_users)
+                    #
+                    # final_response_content += f"""\n
+                    # <full profiles> 
+                    # {final_users_str}
+                    # </full profiles>
+                    # """
 
                     astralis_msg = { "role": "assistant", "content": final_response_content }
                     await self._save_message(session_id, astralis_msg)
@@ -225,7 +229,8 @@ class Astralis:
 
 
     async def _determine_action(self, thought):
-        ACTION_PROMPT = self.prompt_manager.get_prompt("ACTION_PROMPT", thought=thought)
+        iteration = len(self.context.get('memory', []))
+        ACTION_PROMPT = self.prompt_manager.get_prompt("ACTION_PROMPT", thought=thought, iteration=iteration)
         async for chunk in self._llm_call(ACTION_PROMPT):
             yield chunk
 
@@ -250,9 +255,9 @@ class Astralis:
         async for chunk in self._llm_call(RESPONSE_PROMPT):
             yield chunk
 
-    async def _generate_final_users(self, final_response):
+    async def _generate_final_users(self):
         memory = self.context.get('memory', [])
-        formatted_hist = self._formatted_history(memory) + final_response
+        formatted_hist = self._formatted_history(memory)
         FORMAT_USERS_PROMPT = self.prompt_manager.get_prompt(
             "FORMAT_USERS_PROMPT",
             observation_history=formatted_hist
@@ -267,6 +272,57 @@ class Astralis:
         for user_id in user_ids:
             user = await self._get_user_profile(user_id)
             yield user.to_dict()
+
+
+    async def stream_response_and_users_parallel(self):
+        async def stream_final_response():
+            async for chunk in self._generate_final_response():
+                yield {"type": "response", "message": chunk}
+
+        async def stream_final_users():
+            async for user in self._generate_final_users():
+                yield {"type": "users_found", "message": user}
+
+        response_gen = stream_final_response()
+        users_gen    = stream_final_users()
+
+        # Kick off the first __anext__ calls
+        try:
+            response_task = asyncio.create_task(response_gen.__anext__())
+        except StopAsyncIteration:
+            response_task = None
+
+        try:
+            users_task = asyncio.create_task(users_gen.__anext__())
+        except StopAsyncIteration:
+            users_task = None
+
+        while True:
+            # Build the list of currently active tasks
+            pending = [t for t in (response_task, users_task) if t]
+            if not pending:
+                break
+
+            done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+
+            for finished in done:
+                # If this was the response stream
+                if finished is response_task:
+                    try:
+                        chunk = finished.result()
+                        yield chunk
+                        response_task = asyncio.create_task(response_gen.__anext__())
+                    except StopAsyncIteration:
+                        response_task = None
+
+                # If this was the users stream
+                elif finished is users_task:
+                    try:
+                        user = finished.result()
+                        yield user
+                        users_task = asyncio.create_task(users_gen.__anext__())
+                    except StopAsyncIteration:
+                        users_task = None
 
 
     async def _llm_call(self, user_prompt: str = ''):
@@ -399,10 +455,17 @@ class Astralis:
         return match.group(1).strip() if match else ""
 
     async def _execute_action(self, action: str, action_input: Dict[str, Any]) -> List[User]:
-        action = action.lower()
+        if isinstance(action, str):
+            action_type = re.sub(r"[<>]", "", action.strip().lower())
+        elif isinstance(action, dict):
+            raw_type = action.get("type", "")
+            action_type = re.sub(r"[<>]", "", str(raw_type).strip().lower())
+        else:
+            raise ValueError(f"Invalid action format: {action}")
+
         print(f"Executing action: {action} with input: {action_input}")
 
-        if action == "query_graph":
+        if action_type == "query_graph":
             query = action_input.get("query")
             variables = action_input.get("variables", [])
             try:
@@ -413,6 +476,7 @@ class Astralis:
                         user_ids.append(record.data()[var]["user_id"])
 
 
+                print(user_ids)
                 unique_user_ids = list(set(user_ids))
                 print(f"Found {len(unique_user_ids)} unique user IDs from vector search.")
 
@@ -425,10 +489,11 @@ class Astralis:
                 print(f"[ERROR] Failed during graph rag or profile fetching: {e}")
                 raise HTTPException(status_code=500, detail=f"graph rag/profile fetch failed: {e}")
 
-        elif action == "search_rag_service":
+        elif action_type == "search_rag_service":
             query = action_input.get("query")
             namespace = action_input.get("namespace")
-            top_k = action_input.get("top_k", 5)
+            # top_k = action_input.get("top_k", 5)
+            top_k = 20
 
             if not query or not namespace:
                 print("[ERROR] Missing 'query' or 'namespace' for search_rag_service")
@@ -466,7 +531,7 @@ class Astralis:
                 print(f"[ERROR] Failed during vector search or profile fetching: {e}")
                 raise HTTPException(status_code=500, detail=f"Vector search/profile fetch failed: {e}")
 
-        elif action == "fetch_profile":
+        elif action_type == "fetch_profile":
             user_id = None
             if isinstance(action_input, str):
                 user_id = action_input
@@ -487,7 +552,7 @@ class Astralis:
                 print(f"[ERROR] Failed fetching profile for {user_id}: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to fetch profile {user_id}: {e}")
 
-        elif action == "filter_structured":
+        elif action_type == "filter_structured":
             filters = action_input.get("filters", {})
             user_ids = action_input.get("user_ids", [])
 
@@ -624,7 +689,7 @@ class Astralis:
 
             return filtered_users
 
-        elif action == "request_clarification":
+        elif action_type == "request_clarification":
             question = action_input.get("question", "Could you please provide more details?")
             if not isinstance(question, str) or not question.strip():
                  print("[WARN] Invalid or empty question provided for clarification. Using default.")
@@ -635,7 +700,7 @@ class Astralis:
             print(f"  - Set clarification flags. Question: '{self.context['clarification_question']}'")
             return [] 
 
-        elif action == "finish":
+        elif action_type == "finish":
             print("[INFO] 'finish' action recognized.")
             return []
         else:

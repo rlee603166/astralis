@@ -61,7 +61,7 @@ async def create_session(
         )
         await session.commit()
 
-    return {"session_id": session_id}
+    return { "session_id": str(session_id) }
 
 
 @router.post("/query")
