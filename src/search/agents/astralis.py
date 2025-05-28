@@ -56,7 +56,7 @@ class Astralis:
         self.context.pop('clarification_question', None)
 
         print(f"[RUN START]: Session {session_id}, Query: '{user_query}', History Len: {len(self.context['conversation'])}")
-        yield { "type": "start", "message": "Starting to process your query", "session_id": session_id }
+        yield { "type": "start", "message": "Starting to process your query", "session_id": str(session_id) }
 
         try:
             while True:
@@ -163,18 +163,19 @@ class Astralis:
                 # Check if the *last appended action* was 'finish'
                 if self._is_task_complete():
                     final_response_content = ""
-
-                    async for item in self.stream_response_and_users_parallel():
-                        yield item
-
-                    # async for final_chunk in self._generate_final_response():
-                    #     final_response_content += final_chunk
-                    #     yield { "type": "response", "message": final_chunk }
                     #
-                    # final_users = []
-                    # async for user in self._generate_final_users(final_response_content):
-                    #     final_users.append(user)
-                    #     yield { "type": "users_found", "message": user }
+                    # async for item in self.stream_response_and_users_parallel():
+                    #     yield item
+
+            
+                    async for final_chunk in self._generate_final_response():
+                        final_response_content += final_chunk
+                        yield { "type": "response", "message": final_chunk }
+
+                    final_users = []
+                    async for user in self._generate_final_users(final_response_content):
+                        final_users.append(user)
+                        yield { "type": "users_found", "message": user }
 
 
 
@@ -255,9 +256,9 @@ class Astralis:
         async for chunk in self._llm_call(RESPONSE_PROMPT):
             yield chunk
 
-    async def _generate_final_users(self):
+    async def _generate_final_users(self, final_response):
         memory = self.context.get('memory', [])
-        formatted_hist = self._formatted_history(memory)
+        formatted_hist = self._formatted_history(memory) + final_response
         FORMAT_USERS_PROMPT = self.prompt_manager.get_prompt(
             "FORMAT_USERS_PROMPT",
             observation_history=formatted_hist
@@ -274,55 +275,55 @@ class Astralis:
             yield user.to_dict()
 
 
-    async def stream_response_and_users_parallel(self):
-        async def stream_final_response():
-            async for chunk in self._generate_final_response():
-                yield {"type": "response", "message": chunk}
-
-        async def stream_final_users():
-            async for user in self._generate_final_users():
-                yield {"type": "users_found", "message": user}
-
-        response_gen = stream_final_response()
-        users_gen    = stream_final_users()
-
-        # Kick off the first __anext__ calls
-        try:
-            response_task = asyncio.create_task(response_gen.__anext__())
-        except StopAsyncIteration:
-            response_task = None
-
-        try:
-            users_task = asyncio.create_task(users_gen.__anext__())
-        except StopAsyncIteration:
-            users_task = None
-
-        while True:
-            # Build the list of currently active tasks
-            pending = [t for t in (response_task, users_task) if t]
-            if not pending:
-                break
-
-            done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-
-            for finished in done:
-                # If this was the response stream
-                if finished is response_task:
-                    try:
-                        chunk = finished.result()
-                        yield chunk
-                        response_task = asyncio.create_task(response_gen.__anext__())
-                    except StopAsyncIteration:
-                        response_task = None
-
-                # If this was the users stream
-                elif finished is users_task:
-                    try:
-                        user = finished.result()
-                        yield user
-                        users_task = asyncio.create_task(users_gen.__anext__())
-                    except StopAsyncIteration:
-                        users_task = None
+    # async def stream_response_and_users_parallel(self):
+    #     async def stream_final_response():
+    #         async for chunk in self._generate_final_response():
+    #             yield {"type": "response", "message": chunk}
+    #
+    #     # async def stream_final_users():
+    #     #     async for user in self._generate_final_users():
+    #     #         yield {"type": "users_found", "message": user}
+    #
+    #     # response_gen = stream_final_response()
+    #     # users_gen    = stream_final_users()
+    #
+    #     # Kick off the first __anext__ calls
+    #     try:
+    #         response_task = asyncio.create_task(response_gen.__anext__())
+    #     except StopAsyncIteration:
+    #         response_task = None
+    #
+    #     try:
+    #         users_task = asyncio.create_task(users_gen.__anext__())
+    #     except StopAsyncIteration:
+    #         users_task = None
+    #
+    #     while True:
+    #         # Build the list of currently active tasks
+    #         pending = [t for t in (response_task, users_task) if t]
+    #         if not pending:
+    #             break
+    #
+    #         done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+    #
+    #         for finished in done:
+    #             # If this was the response stream
+    #             if finished is response_task:
+    #                 try:
+    #                     chunk = finished.result()
+    #                     yield chunk
+    #                     response_task = asyncio.create_task(response_gen.__anext__())
+    #                 except StopAsyncIteration:
+    #                     response_task = None
+    #
+    #             # If this was the users stream
+    #             elif finished is users_task:
+    #                 try:
+    #                     user = finished.result()
+    #                     yield user
+    #                     users_task = asyncio.create_task(users_gen.__anext__())
+    #                 except StopAsyncIteration:
+    #                     users_task = None
 
 
     async def _llm_call(self, user_prompt: str = ''):
